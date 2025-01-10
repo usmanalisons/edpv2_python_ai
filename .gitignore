@@ -1,0 +1,66 @@
+# Python cache and bytecode files
+__pycache__/
+*.py[cod]
+
+# Virtual environment directory
+venv/
+env/
+.venv/
+ENV/
+.ENV/
+
+# FastAPI specific
+*.log
+
+# Database files
+*.sqlite3
+*.db
+
+# Local configuration files
+*.env
+*.local
+
+# IDE/editor specific files
+.vscode/
+.idea/
+*.iml
+
+# Jupyter Notebook checkpoint files
+.ipynb_checkpoints/
+
+# OS-specific files
+.DS_Store  # macOS
+Thumbs.db  # Windows
+
+# pytest cache
+.cache/
+
+# Coverage reports
+.coverage
+*.cover
+*.hypothesis/
+.pytest_cache/
+
+# mypy (type checking) reports
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# pyenv
+.python-version
+
+# Poetry-specific files (if using Poetry for dependency management)
+poetry.lock
+poetry.toml
+
+# Pipenv-specific files (if using Pipenv for dependency management)
+Pipfile.lock
+
+
+.env
+
+chromadb_data
+
+/app/data
+/app/Userfiles
+/app/charts
