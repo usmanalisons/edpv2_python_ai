@@ -2,11 +2,11 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from app.routers import document_search_routes, databse_search_routes, auth_routes
-from app.dependencies import get_chromedb_service, get_chat_memory_manager, get_sql_database_service
+from app.routers import document_search_routes, databse_search_routes, auth_routes, chat_routes
+from app.dependencies import get_chromedb_service, get_chat_memory_service
 import logging
 from contextlib import asynccontextmanager
-from sqlalchemy import text
+import asyncio
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,25 +19,18 @@ async def lifespan(app: FastAPI):
     logging.info("Starting application...")
 
     chromadb_service = get_chromedb_service()
-    chat_memory_manager = get_chat_memory_manager()
-    intranet_db_service = get_sql_database_service("intranet")
-    quantum_db_service = get_sql_database_service("quantum")
+    chat_memory_service = get_chat_memory_service()
 
     app.state.chromadb_service = chromadb_service
-    app.state.chat_memory_manager = chat_memory_manager
-    app.state.intranet_db_service = intranet_db_service
-    app.state.quantum_db_service = quantum_db_service
+    app.state.chat_memory_service = chat_memory_service
+
+    task = asyncio.create_task(chat_memory_service.clear_inactive_sessions())
 
     try:
-        with intranet_db_service.get_session() as session:
-            session.execute(text("SELECT 1"))
-        with quantum_db_service.get_session() as session:
-            session.execute(text("SELECT 1"))
-        logging.info("Dependencies initialized successfully.")
         yield
     finally:
+        task.cancel()
         logging.info("Shutting down application...")
-        logging.info("Cleanup completed.")
 
 app = FastAPI(lifespan=lifespan)
 
@@ -67,6 +60,7 @@ async def not_found_exception_handler(request: Request, exc: Exception):
 
 app.include_router(document_search_routes.router, prefix="/api")
 app.include_router(databse_search_routes.router, prefix="/api")
+app.include_router(chat_routes.router, prefix="/api")
 app.include_router(auth_routes.router, prefix="/api")
 
 @app.get("/api")

@@ -7,23 +7,23 @@ import io
 import logging
 import re
 from app.core.config import settings
-from autocorrect import Speller
-from langdetect import detect, DetectorFactory
+# from autocorrect import Speller
+# from langdetect import detect, DetectorFactory
 
-DetectorFactory.seed = 0 
-spell = Speller(lang='en')
+# DetectorFactory.seed = 0 
+# spell = Speller(lang='en')
 pytesseract.pytesseract.tesseract_cmd = settings.PYTESSERACT_LOCAL_PATH
 
 def format_file_text(text, apply_spell_check=False):
     text = re.sub(r'\s+', ' ', text).strip()
     text = re.sub(r'\.{3,}', '', text)
     text = re.sub(r'\bcontrolled\b', '', text, flags=re.IGNORECASE)
-    try:
-        if detect(text) != 'en':
-            return ""
-    except Exception as e:
-        logging.error(f"Language detection failed: {e}")
-        return ""
+    # try:
+    #     if detect(text) != 'en':
+    #         return ""
+    # except Exception as e:
+    #     logging.error(f"Language detection failed: {e}")
+    #     return ""
 
     return text.strip()
 

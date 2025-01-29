@@ -1,5 +1,5 @@
 from sqlalchemy import create_engine, text, inspect
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, scoped_session
 from contextlib import contextmanager
 from app.core.config import settings
 import logging
@@ -11,7 +11,8 @@ class SQLDatabaseService:
             raise ValueError(f"No connection string found for '{connection_name}'")
         
         self.engine = create_engine(self.connection_string, pool_pre_ping=True)
-        self.SessionLocal = sessionmaker(bind=self.engine)
+        # self.SessionLocal = sessionmaker(bind=self.engine)
+        self.SessionLocal = scoped_session(sessionmaker(bind=self.engine))
 
     @contextmanager
     def get_session(self):
@@ -248,20 +249,28 @@ class SQLDatabaseService:
             return newChat
 
 
-    def add_chat_message(self, chat_uid: str, message_type: str, message_text: str):
+    def add_chat_message(self, chat_uid: str, message_type: str, message_text: str, message_html: str = None, message_json: str = None, sql_query: str = None):
         try:
             with self.get_session() as session:
                 query = text("""
-                    INSERT INTO chat_messages (chat_uid, message_type, message_text, created_at, updated_at)
-                    VALUES (:chat_uid, :message_type, :message_text, GETDATE(), GETDATE());
+                    INSERT INTO chat_messages (chat_uid, message_type, message_text, message_html, message_json, sql_query, created_at, updated_at)
+                    VALUES (:chat_uid, :message_type, :message_text, :message_html, :message_json, :sql_query, GETDATE(), GETDATE());
                 """)
-                session.execute(query, {"chat_uid": chat_uid, "message_type": message_type, "message_text": message_text})
+                session.execute(query, {
+                    "chat_uid": chat_uid, 
+                    "message_type": message_type, 
+                    "message_text": message_text, 
+                    "message_html": message_html, 
+                    "message_json": message_json,
+                    "sql_query": sql_query
+                })
                 session.commit()
                 logging.info(f"Message added to chat {chat_uid} successfully.")
             return True
         except Exception as e:
             logging.error(f"Error adding chat message: {e}")
             return False
+
 
     def get_chat_messages(self, chat_uid: str, message_type: str = None):
         result_data = []
@@ -293,43 +302,19 @@ class SQLDatabaseService:
                 query = text("""
                    WITH RankedData AS (
                         SELECT 
-                            LNO,
-                            COMPANY_ID,
-                            COMPANY_CODE,
-                            COMPANY_NAME,
-                            PROJECT_CODE,
-                            PROJECT_NAME,
-                            TOTAL_BUDGET,
-                            TOTAL_COST_AT_COMPLETION,
-                            VARIATION_AT_COMPLETION,
-                            CTC_STATUS,
-                            RISK_INDICATOR_CPI,
-                            RISK_CATEGORY,
-                            EXPENSE_CUMULATIVE,
+                            *,
                             ROW_NUMBER() OVER (PARTITION BY COMPANY_CODE ORDER BY COMPANY_CODE) AS RowNum
                         FROM 
                             dbo.VIEW_COMPANY_PROJECT_COST_TO_COMPLETE
                     )
                     SELECT 
-                        LNO,
-                        COMPANY_ID,
-                        COMPANY_CODE,
-                        COMPANY_NAME,
-                        PROJECT_CODE,
-                        PROJECT_NAME,
-                        TOTAL_BUDGET,
-                        TOTAL_COST_AT_COMPLETION,
-                        VARIATION_AT_COMPLETION,
-                        CTC_STATUS,
-                        RISK_INDICATOR_CPI,
-                        RISK_CATEGORY,
-                        EXPENSE_CUMULATIVE
+                        *
                     FROM 
                         RankedData
                     WHERE 
-                        RowNum = 1 -- Select the first row per distinct COMPANY_CODE
+                        RowNum = 1
                     ORDER BY 
-                        COMPANY_CODE -- or any other column you want to use for sorting
+                        COMPANY_CODE
                     OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY;
 
                 """)
@@ -345,5 +330,5 @@ class SQLDatabaseService:
                     result_data.append(row_data)
             return result_data
         except Exception as e:
-            logging.error(f"Error: {e}")
+            logging.error(f"Error in get_top_distinct_ctc_data: {e}")
             return []

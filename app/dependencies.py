@@ -1,7 +1,6 @@
 import logging
 from app.services.chroma_db_service import ChromaDBService
-from app.services.chat_memory_manager_service import ChatMemoryManager
-from app.services.sql_db_service import SQLDatabaseService
+from app.services.chat_memory_service import ChatMemoryService
 from app.core.config import settings
 
 PERSIST_DIRECTORY = "./chromadb_data"
@@ -14,8 +13,5 @@ def get_chromedb_service():
         model_name=MODEL_NAME,
     )
 
-def get_chat_memory_manager():
-    return ChatMemoryManager(openai_api_key=settings.OPENAI_API_KEY)
-
-def get_sql_database_service(connection_name: str = "intranet"):
-    return SQLDatabaseService(connection_name=connection_name)
+def get_chat_memory_service():
+    return ChatMemoryService(openai_api_key=settings.OPENAI_API_KEY)

@@ -11,9 +11,6 @@ class TextProcessorService:
         )
 
     def process_pages(self, pages, document_data):
-        """
-        Process a list of pages into manageable text chunks and corresponding metadata.
-        """
         document_chunks = []
         document_metadatas = []
 
