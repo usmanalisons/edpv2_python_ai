@@ -59,8 +59,6 @@ Pipfile.lock
 
 .env
 
-chromadb_data
-
 /app/data
 /app/Userfiles
 /app/charts
