@@ -7,7 +7,7 @@ class TokenService:
         self.model_name = model_name
         self.max_input_tokens = 128000  # GPT-4o max input tokens
         self.max_output_tokens = 16384  # GPT-4o max output tokens
-        self.safety_margin = 1000  # Buffer for system messages and safety
+        self.safety_margin = 2000  # Buffer for system messages and safety
 
     def calculate_max_tokens(self, input_text: str) -> int:
         """Calculate maximum available tokens for completion"""

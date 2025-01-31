@@ -24,6 +24,7 @@ class Settings:
         "ctc": os.getenv("SQL_CONNECTION_STRING_CTC"),
         "quantum": os.getenv("SQL_CONNECTION_STRING_QUANTUM"),
     }
+    BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL")
 
 settings = Settings()
 

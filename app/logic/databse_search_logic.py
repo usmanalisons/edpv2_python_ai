@@ -2,19 +2,23 @@ import re
 import xml.etree.ElementTree as ET
 from app.services.sql_db_service import SQLDatabaseService
 from app.services.database_search_prompt_service import DatabaseSearchPromptService
+from app.services.chat_prompt_service import ChatPromptService
 from app.core.config import settings
 from app.services.chat_memory_service import ChatMemoryService
 from uuid import uuid4
 from app.utils.helper import Helper
 import json
 import asyncio
+from app.services.chroma_db_service import ChromaDBService
 
 
 class DatabaseSearchLogic:
-    def __init__(self, chat_memory_service):
+    def __init__(self, chroma_db_service, chat_memory_service):
+        self.chroma_db_service: ChromaDBService = chroma_db_service
         self.chat_memory_service: ChatMemoryService = chat_memory_service
         self.intranet_db_service = SQLDatabaseService(connection_name="intranet")
         self.ctc_db_service = SQLDatabaseService(connection_name="ctc")
+        self.chat_prompt_service = ChatPromptService(model_name="gpt-4o-mini", api_key=settings.OPENAI_API_KEY)
         self.db_prompt_service = DatabaseSearchPromptService(model_name="gpt-4o", api_key=settings.OPENAI_API_KEY)
 
     def sanitize_sql(self, sql_query: str) -> str:
@@ -176,46 +180,49 @@ class DatabaseSearchLogic:
 
         ctc_data_by_companies = self.ctc_db_service.get_top_distinct_ctc_data()
 
-        analyze_response = await self.db_prompt_service.analyze_question(query,  xml_schema, memory=chat_memory, sample_data=ctc_data_by_companies)
-        return analyze_response
+        # collection_key = "oracleTrainings"
+        # collection_key1 = "policiesProcedures"
 
-        intents = analyze_response.get('intents', [])
+        # retriever = await self.chroma_db_service.retrieve_as_retriever(
+        #     collection_key=collection_key,
+        # )
+        # trainings_docs = retriever.invoke(
+        #     input=query,
+        # )
+        # training_contexts = [doc.page_content for doc in trainings_docs]
+        # combined_trainings_context = " ".join(training_contexts)
+
+        # retriever1 = await self.chroma_db_service.retrieve_as_retriever(
+        #     collection_key=collection_key,
+        # )
+        # policies_docs = retriever1.invoke(
+        #     input=query,
+        # )
+        # training_contexts = [doc.page_content for doc in policies_docs]
+        # combined_policies_context = " ".join(training_contexts)
+
+        analyze_response = await self.chat_prompt_service.analyze_question(query, schema_info=xml_schema, memory=chat_memory, sample_data=ctc_data_by_companies)
+        # return analyze_response
+
+        classification = analyze_response.get('classification', '')
         error = analyze_response.get('error', '')
-        refined_query = analyze_response.get('refined_query', '')
+        refined_question = analyze_response.get('refined_question', '')
         chart_types = analyze_response.get('chart_types', [])
 
-
-        print(f'intents: {intents}')
-        print(f'refined_query: {refined_query}')
-        print(f'chart_types: {chart_types}')
-        print(f'error_message: {error}')
-
-        if error:
+        if error or classification == 'EMPTY':
             await asyncio.sleep(0.5)
-            return await self.process_ctc_response(
+            return await self.get_final_result(
                 query=query, 
-                refined_query=refined_query, 
-                intents=intents, 
-                final_sql_query=
-                final_sql_query, 
-                rows=[], generated_charts=[], 
+                refined_query=refined_question, 
+                rows=[], 
+                generated_charts=[], 
                 chat_id = chat_id, 
                 user_email = user_email, 
-                is_new_chat = is_new_chat, error_message = error
+                is_new_chat = is_new_chat, 
+                error_message = error
             )
         
         rows = []
-
-        ctc_data_by_companies = self.ctc_db_service.get_top_distinct_ctc_data()
-       
-
-        #  "database": schema_info["database"],
-        #     "table_names": schema_info["tables"],
-        #     "schema_description": schema_info["schema"],
-        #     "rights_schema": schema_info["rights_schema"],
-        #     "rights_table": schema_info["rights_table"],
-        
-
         schema_info = {
             "database": db_name,
             "tables":  tables,
@@ -227,7 +234,7 @@ class DatabaseSearchLogic:
 
         await asyncio.sleep(0.5)
         rows, final_sql_query, error_msg = await self.sql_execution_with_regenerate(
-            user_query=refined_query,
+            user_query=refined_question,
             schema_info=schema_info,
             user_email=user_email,
             ctc_data_by_companies = ctc_data_by_companies,
@@ -236,7 +243,7 @@ class DatabaseSearchLogic:
 
         if error_msg:
             error = "Could not get data, please report back to IT support team."
-            # return await self.process_ctc_response(
+            # return await self.get_final_result(
             #     query=query, 
             #     refined_query=refined_query, 
             #     final_sql_query=final_sql_query, 
@@ -248,7 +255,7 @@ class DatabaseSearchLogic:
             #     error_message = error
             # )
         
-            return await self.process_ctc_response(
+            return await self.get_final_result(
                 query=query, 
                 refined_query=refined_query, 
                 final_sql_query=final_sql_query, 
@@ -285,7 +292,7 @@ class DatabaseSearchLogic:
                         generated_charts[chart_type] = public_url
 
        
-        return await self.process_ctc_response(
+        return await self.get_final_result(
             query=query, 
             refined_query=refined_query, 
             final_sql_query=final_sql_query, 
@@ -296,7 +303,7 @@ class DatabaseSearchLogic:
             is_new_chat = is_new_chat
         )
 
-    async def process_ctc_response(
+    async def get_final_result(
         self,
         query: str,
         refined_query: str,
@@ -351,4 +358,5 @@ class DatabaseSearchLogic:
                 "chat": chat,
             }
         }
+    
 

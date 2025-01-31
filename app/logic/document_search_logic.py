@@ -5,6 +5,7 @@ from fastapi import UploadFile
 from app.utils.file_loader import load_text_from_file
 from app.services.text_processor_service import TextProcessorService
 from app.services.document_search_prompt_service import DocumentSearchPromptService
+from app.services.chat_prompt_service import ChatPromptService
 from app.utils.helper import Helper
 from app.core.config import settings
 from app.core.constants import MAX_TOKENS_PER_REQUEST
@@ -19,6 +20,7 @@ class DocumentSearchLogic:
         self.intranet_db_service = SQLDatabaseService(connection_name="intranet")
         self.quantum_db_service = SQLDatabaseService(connection_name="quantum")
         self.text_processor_service = TextProcessorService(model_name=settings.OPENAI_EMBEDDING_MODEL)
+        self.chat_prompt_service = ChatPromptService(model_name="gpt-4o-mini", api_key=settings.OPENAI_API_KEY)
         self.prompt_service = DocumentSearchPromptService(model_name="gpt-4o-mini", api_key=settings.OPENAI_API_KEY)
 
     def get_chat_messages(self, chat_id):
@@ -169,7 +171,9 @@ class DocumentSearchLogic:
 
         human_messages = await self.chat_memory_service.get_human_messages(chat_id)
         
-        refined_query = await self.prompt_service.refine_user_question(query, human_messages)
+        analyze_response = await self.chat_prompt_service.analyze_question(query, chat_memory)
+
+        return analyze_response
 
         filters = Helper.filter_policies_procedures(email, department_code, company_code)
 
@@ -242,7 +246,7 @@ class DocumentSearchLogic:
 
         human_messages = await self.chat_memory_service.get_human_messages(chat_id)
 
-        refined_query = await self.prompt_service.refine_user_question(query, human_messages)
+        refined_query = await self.prompt_service.analyze_question(query, chat_memory)
 
         retriever = await self.chroma_db_service.retrieve_as_retriever(
             collection_key=collection_key,

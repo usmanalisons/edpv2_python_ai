@@ -184,9 +184,9 @@ class SQLDatabaseService:
         try:
             with self.get_session() as session:
                 query = text("""
-                   SELECT * FROM chats WHERE employee_email = :employee_email AND chat_type = :chat_type ORDER BY updated_at DESC;
+                   SELECT * FROM chats WHERE employee_email = :employee_email ORDER BY updated_at DESC;
                 """)
-                params = {"employee_email": employee_email, "chat_type": chat_type}
+                params = {"employee_email": employee_email}
                 result = session.execute(query, params)
                 rows = result.fetchall()
                 if not rows:

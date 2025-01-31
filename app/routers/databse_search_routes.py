@@ -12,8 +12,10 @@ router = APIRouter(
 
 
 async def get_database_search_logic(request: Request):
+    chromadb_service = request.app.state.chromadb_service
     chat_memory_service = request.app.state.chat_memory_service
     return DatabaseSearchLogic(
+        chroma_db_service=chromadb_service,
         chat_memory_service=chat_memory_service,
     )
 

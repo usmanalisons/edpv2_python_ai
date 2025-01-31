@@ -20,6 +20,5 @@ sqlalchemy
 autocorrect
 langdetect
 pyodbc
-Speller
 matplotlib
 chromadb

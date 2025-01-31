@@ -483,7 +483,7 @@
 
 
 
-
+import re
 from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain.chains import LLMChain
 from langchain_openai.chat_models import ChatOpenAI
@@ -494,14 +494,10 @@ from decimal import Decimal
 import json
 import logging
 from app.services.token_service import TokenService
+import datetime
+import pandas as pd
 
 class DatabaseSearchPromptService:
-    """
-    A service for handling database queries, SQL generation, and response formatting.
-    This service combines query analysis, SQL generation, and response formatting
-    while maintaining efficient token usage and clear conversation structure.
-    """
-    
     def __init__(self, model_name: str, api_key: str):
         self.llm = ChatOpenAI(
             model=model_name,
@@ -510,77 +506,34 @@ class DatabaseSearchPromptService:
         )
         self.token_service = TokenService(model_name=model_name)
 
-
-        self.merged_analysis_prompt = ChatPromptTemplate.from_messages([
-            SystemMessagePromptTemplate.from_template(
-                """You are an advanced AI assistant that analyzes user queries in multiple ways:
-                1. Classification: Determine which system should handle the query
-                2. Query Refinement: Either improve the query or request clarification
-                3. Error Detection: Identify if the query is unclear or incomplete
-                4. Visualization Needs: Determine if the query requires any charts or visualizations
-
-                **Classification Guidelines:**
-                - POLICIES: Company policies, procedures, guidelines, regulations, compliance, loan, security
-                - ORACLE: Oracle systems, training materials, Oracle-related procedures
-                - CTC: Project costs, budgets, cost estimates, financial data
-                - EMPTY: When the query is unclear or needs clarification
-
-                **Refinement Guidelines:**
-                - For clear queries: Enhance them for better search results
-                - For unclear queries: Create a user-friendly follow-up question that:
-                  * Clearly explains what additional information is needed
-                  * Uses natural, conversational language
-                  * Provides examples when helpful
-                  * Avoids technical jargon
-
-                **Visualization Guidelines:**
-                - Identify if the query requires any of the following chart types:
-                  * bar_chart
-                  * line_chart
-                  * pie_chart
-                  * column_chart
-
-                **Error Handling:**
-                - If the query is unclear or incomplete, provide an error message explaining the issue.
-
-                **Database Context:**
-                - Here is some sample data from the database to help you understand the terms and structure:
-                {sample_data}
-
-                **Response Format:**
-                CLASSIFICATION: <POLICIES/ORACLE/CTC/EMPTY>
-                REFINED_QUERY: <refined query or follow-up question>
-                ERROR: <error message if unclear, empty otherwise>
-                CHART_TYPES: <comma-separated list of requested chart types if any>"""
-            ),
-            HumanMessagePromptTemplate.from_template(
-                """Database Schema:
-                {tables_info}
-
-                Chat History:
-                {chat_history}
-
-                User Question:
-                {question}
-
-                Analyze this query according to the guidelines."""
-            )
-        ])
-
-        
-        # Initialize the SQL generation prompt template
         self.sql_generation_prompt = ChatPromptTemplate.from_messages([
             SystemMessagePromptTemplate.from_template(
                 """You are an SQL expert generating optimized SQL Server queries.
                 Follow these strict rules:
-                1. Use only columns from the provided schema
-                2. Fully qualify all column names (table.column)
-                3. Include proper JOINs and user rights filtering
-                4. Ensure NULL safety in calculations
-                5. Avoid nested aggregates
-                6. Use LIKE with wildcards for string matching
+                1. **Objective**: Generate a valid, optimized SQL Server `SELECT` query to answer the user's".
+                2. **Strict Output Requirements**:
+                - The output must be a valid SQL Server `SELECT` query only, starting with `SELECT` and containing no extra text, comments, or explanations.
+                - The query must be clean and formatted properly with no extraneous text or commentary.
+                3. **Query Construction Rules**:
+                - Use only columns explicitly defined in the schema. Do not invent or assume columns.
+                - Dynamically identify and include required `JOIN`s based on column dependencies or relationships in the schema.
+                - Fully qualify all column names with their respective table or alias to avoid ambiguity.
+                - Enforce user rights by joining the rights table on `COMPANY_ID` and filtering rows with `COMPANY_USER_MAIL LIKE '%email%'`.
+                - Use `LIKE '%...%'` instead of `=` for string comparisons.
+                - Ensure null safety by using `NULLIF` for division operations to prevent divide-by-zero errors.
+                - Avoid invalid constructs, such as nested aggregate functions (e.g., `SUM(SUM(...))`). Break them into independent calculations instead.
+                - If using `DISTINCT` in combination with `ORDER BY`, ensure all `ORDER BY` columns are included in the `SELECT` list.
+                4. **Error Prevention**:
+                - Validate all column references against the schema. Do not include columns that are not explicitly part of the schema.
+                - If a column does not exist in the schema, exclude it and provide a simplified query that still answers the user's question.
+                - Avoid ambiguous column references and ensure all aliases are properly declared and used.
+
+                ### Dynamic Adjustments ###
+                - If the question is vague (e.g., missing timeframes or metrics), assume reasonable defaults:
+                - Use all available data if no time period is specified.
+                - Compare using absolute differences unless otherwise stated.
                 
-                Return only the SQL query, no explanations."""
+                Return only the SQL query, no explanations, no quotes."""
             ),
             HumanMessagePromptTemplate.from_template(
                 """Database: {database}
@@ -595,27 +548,26 @@ class DatabaseSearchPromptService:
             )
         ])
         
-        # Initialize the response generation prompt template
         self.response_prompt = ChatPromptTemplate.from_messages([
             SystemMessagePromptTemplate.from_template(
-                """Your task is to analyze the provided data and generate a response that directly answers the user's question while providing context, insights, and visualizations.
+                """ You are an AI assistant tasked with generating a well-structured HTML response, and optionally, a title..
 
                 **Response Requirements:**
-                1. **Text Response:**
+                1. **HTML Response:**
                 - Start with a concise summary of the key findings.
                 - Explain the data in detail, addressing the user's question directly.
                 - Highlight trends, patterns, or anomalies in the data.
                 - Use bullet points or numbered lists for clarity when appropriate.
                 - Format numbers with commas and AED currency (e.g., 1,234,567.89 AED).
                 - If applicable, calculate percentages, growth rates, or other metrics to provide deeper insights.
-
-                2. **HTML Response:**
                 - Use clean, semantic HTML for structure.
-                - Include tables with borders for data presentation.
-                - Embed charts as `<img>` tags using base64-encoded images.
+                - Include tables with borders for data presentation if needed.
+                - Embed charts as `<img>` tags using charts.
                 - Use headings (h3, h4, h5) to organize sections.
                 - Add descriptive captions for charts and tables.
-                - Ensure the HTML is self-contained (no external CSS or scripts).
+                - Ensure the HTML is self-contained (no external CSS or scripts, quotes).
+                2. **Text Response:**
+                - just a simple text response based on the created html 
 
                 3. **Title (if requested):**
                 - Generate a clear and descriptive title that summarizes the response.
@@ -623,32 +575,9 @@ class DatabaseSearchPromptService:
                 4. **Error Handling:**
                 - If an error is provided, explain it clearly and suggest possible solutions or next steps.
 
-                **Example Response:**
-                TEXT: The analysis shows that the ASMEF company has 100 projects distributed across three risk categories: High Risk (20 projects), Medium Risk (50 projects), and Low Risk (30 projects). The majority of projects fall under the Medium Risk category, indicating a balanced risk profile. However, the High Risk projects require immediate attention to mitigate potential issues.
-
-                HTML: <h3>Project Risk Analysis for ASMEF</h3>
-                    <p>The analysis shows the following distribution of projects by risk category:</p>
-                    <table border="1">
-                        <thead>
-                            <tr><th>Risk Category</th><th>Project Count</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr><td>High Risk</td><td>20</td></tr>
-                            <tr><td>Medium Risk</td><td>50</td></tr>
-                            <tr><td>Low Risk</td><td>30</td></tr>
-                        </tbody>
-                    </table>
-                    <div class="chart-container">
-                        <h4>Project Distribution by Risk Category</h4>
-                        <img src="data:image/png;base64,..." alt="Project Distribution Chart" />
-                        <p>This pie chart illustrates the proportion of projects in each risk category.</p>
-                    </div>
-
-                TITLE: Project Risk Analysis for ASMEF
-
                 **Return EXACTLY in this format:**
                 TEXT: <natural text response>
-                HTML: <formatted HTML>
+                HTML: <formatted HTML without any quotes or html words or extra tag>
                 TITLE: <title if needed>"""
             ),
             HumanMessagePromptTemplate.from_template(
@@ -660,87 +589,8 @@ class DatabaseSearchPromptService:
             )
         ])
 
-    async def analyze_question(
-        self,
-        question: str,
-        tables_info: str,
-        memory: ConversationBufferMemory,
-        sample_data: List[Dict] = None
-    ) -> Dict[str, str]:
-        """
-        Analyzes a user query to determine classification, refined query, error, and chart types.
-        
-        Args:
-            question (str): The user's query.
-            tables_info (str): Information about the database schema.
-            memory (ConversationBufferMemory): The chat history memory.
-            sample_data (List[Dict]): Sample data from the database to provide context.
-
-        Returns:
-            Dict[str, str]: A dictionary containing classification, refined query, error, and chart types.
-        """
-        # Get optimized chat history using token service
-        chat_history = self.token_service.summarize_chat_history(
-            memory=memory,
-            max_length=1000,
-            max_messages=10
-        )
-        
-        # Format sample data for inclusion in the prompt
-        formatted_sample_data = self._format_sample_data(sample_data) if sample_data else "No sample data provided."
-        
-        # Calculate available tokens for the response
-        input_text = f"{question}\n{tables_info}\n{chat_history}\n{formatted_sample_data}"
-        max_tokens = self.token_service.calculate_max_tokens(input_text)
-        
-        # Create and run the chain
-        chain = LLMChain(
-            llm=self.llm.with_config({"max_tokens": max_tokens}),
-            prompt=self.merged_analysis_prompt
-        )
-        
-        response = await chain.arun({
-            "question": question,
-            "tables_info": tables_info,
-            "chat_history": chat_history,
-            "sample_data": formatted_sample_data
-        })
-        
-        # Parse the response into components
-        result = {
-            "classification": "",
-            "refined_query": "",
-            "error": "",
-            "chart_types": []
-        }
-        
-        for line in response.strip().split('\n'):
-            if line.startswith("CLASSIFICATION:"):
-                result["classification"] = line.replace("CLASSIFICATION:", "").strip()
-            elif line.startswith("REFINED_QUERY:"):
-                result["refined_query"] = line.replace("REFINED_QUERY:", "").strip()
-            elif line.startswith("ERROR:"):
-                result["error"] = line.replace("ERROR:", "").strip()
-            elif line.startswith("CHART_TYPES:"):
-                result["chart_types"] = [
-                    chart.strip() 
-                    for chart in line.replace("CHART_TYPES:", "").strip().split(',')
-                    if chart.strip()
-                ]
-        
-        return result
-
     @staticmethod
     def _format_sample_data(sample_data: List[Dict]) -> str:
-        """
-        Formats sample database data into a readable string for the prompt.
-        
-        Args:
-            sample_data (List[Dict]): Sample data from the database.
-
-        Returns:
-            str: A formatted string representation of the sample data.
-        """
         if not sample_data:
             return "No sample data provided."
         
@@ -759,21 +609,9 @@ class DatabaseSearchPromptService:
         user_email: str,
         sample_data: List[Dict]
     ) -> str:
-        """
-        Generates an optimized SQL query based on the user's question and schema information.
-        """
-        # Format sample data
-        data_summary = "\n".join(
-            f"Company: {d['COMPANY_NAME']}, Project: {d['PROJECT_NAME']}, "
-            f"Budget: {d['TOTAL_BUDGET']}, Status: {d['CTC_STATUS']}"
-            for d in sample_data
-        )
-        
-        # Calculate available tokens
-        merged_input = f"{question}\n{str(schema_info)}\n{data_summary}"
+        formatted_sample_data = self._format_sample_data(sample_data) if sample_data else "No sample data provided."
+        merged_input = f"{question}\n{str(schema_info)}\n{formatted_sample_data}"
         max_tokens = self.token_service.calculate_max_tokens(merged_input)
-        
-        # Create and run the chain
         chain = LLMChain(
             llm=self.llm.with_config({"max_tokens": max_tokens}),
             prompt=self.sql_generation_prompt
@@ -787,33 +625,23 @@ class DatabaseSearchPromptService:
             "rights_schema": schema_info["rights_schema"],
             "rights_table": schema_info["rights_table"],
             "user_email": user_email,
-            "sample_data": data_summary
+            "sample_data": formatted_sample_data
         })
-        
-        # Clean and format the SQL query
         return self._clean_sql_response(response)
 
     async def format_response(
         self,
         question: str,
-        sql_results: List[Dict],
+        data_summary: str,
         charts: Optional[Dict] = None,
         error_message: str = "",
         generate_title: bool = False
     ) -> Dict[str, str]:
-        """
-        Generates formatted text and HTML responses based on query results and charts.
-        """
-        # Prepare data summary
-        data_summary = self._format_data_summary(sql_results) if sql_results else ""
-        
-        # Format chart information
+        # data_summary = self._format_data_summary(sql_results) if sql_results else ""
         charts_info = "\n".join(
             f"{chart_type}: {url}" 
             for chart_type, url in (charts or {}).items()
         )
-        
-        # Calculate available tokens
         merged_input = f"{question}\n{data_summary}\n{charts_info}\n{error_message}"
         max_tokens = self.token_service.calculate_max_tokens(merged_input)
         
@@ -863,60 +691,58 @@ class DatabaseSearchPromptService:
         
         return result
 
-    async def prepare_chart_data(self, data: List[Dict], question: str, available_charts: List[str]) -> Dict:
+    async def prepare_chart_data(self, data_summary: str, question: str, available_charts: List[str]) -> Dict:
         try:
-            # First, ensure data is properly serialized
-            formatted_data = []
-            for row in data:
-                formatted_row = {}
-                for key, value in row.items():
-                    if isinstance(value, Decimal):
-                        formatted_row[key] = float(value)
-                    elif value is None:
-                        formatted_row[key] = ""
-                    else:
-                        formatted_row[key] = value
-                formatted_data.append(formatted_row)
+            # formatted_data = [
+            #     {
+            #         k: (v.strftime('%Y-%m-%d') if isinstance(v, datetime.date) else 
+            #             float(v) if isinstance(v, Decimal) else 
+            #             v if v is not None else "") 
+            #         for k, v in row.items()
+            #     }
+            #     for row in data
+            # ]
 
             prompt = ChatPromptTemplate.from_messages([
-                SystemMessage(content="You are a chart data formatter. Analyze data and format it for visualization."),
-                HumanMessage(content=f"""Given this data:
-{json.dumps(formatted_data, indent=2)}
+                SystemMessage(content="You are a matplotlib chart data formatter. Analyze data and format it for visualization."),
+                HumanMessage(content=f"""Given this data summary:
+                {data_summary}
 
-For this question:
-{question}
+                For this question:
+                {question}
 
-Return data formatted for these chart types:
-{', '.join(available_charts)}
+                Return data formatted for these chart types:
+                {', '.join(available_charts)}
 
-ONLY return a JSON object with this exact structure (no other text):
-{{
-    "chart_type_name": [
-        {{"x_col": "value", "y_col": number}},
-        {{"x_col": "value", "y_col": number}}
-    ]
-}}""")
+                ONLY return a JSON object with this exact structure (no other text):
+                {{
+                    "chart_type_name": [
+                        {{"x_col": "value", "y_col": number}},
+                        {{"x_col": "value", "y_col": number}}
+                    ]
+                }}""")
             ])
 
             response = await LLMChain(llm=self.llm, prompt=prompt).arun({})
 
-            # Clean and parse response
-            cleaned_response = response.strip()
-            if not cleaned_response.startswith('{'):
-                cleaned_response = cleaned_response[cleaned_response.find('{'):]
-            if not cleaned_response.endswith('}'):
-                cleaned_response = cleaned_response[:cleaned_response.rfind('}')+1]
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
+            if not json_match:
+                logging.error(f"LLM response does not contain valid JSON. Raw response: {response}")
+                raise ValueError("LLM response does not contain valid JSON.")
 
-            chart_data = json.loads(cleaned_response)
-            
-            return {
-                chart_type: self._format_chart_data(chart_data.get(chart_type, []))
-                for chart_type in available_charts
-            }
+            cleaned_response = json_match.group(0)
+
+            try:
+                chart_data = json.loads(cleaned_response)
+            except json.JSONDecodeError as e:
+                logging.error(f"JSON decoding failed: {e}. Raw response: {response}")
+                return []
+
+            return chart_data
 
         except Exception as e:
-            logging.error(f"Error preparing chart data: {str(e)}, Data: {data[:2]}, Question: {question}")
-            return {chart_type: [] for chart_type in available_charts}
+            logging.error(f"Error preparing chart data: {str(e)}, Question: {question}")
+            return []
 
     def _format_chart_data(self, data: List[Dict]) -> List[Dict]:
         formatted_data = []
@@ -936,7 +762,6 @@ ONLY return a JSON object with this exact structure (no other text):
         
     @staticmethod
     def _clean_sql_response(sql: str) -> str:
-        """Cleans and formats an SQL query response."""
         sql = sql.strip()
         sql = sql.lstrip('`').rstrip('`')
         if sql.lower().startswith('sql'):
@@ -945,18 +770,19 @@ ONLY return a JSON object with this exact structure (no other text):
 
     @staticmethod
     def _format_data_summary(data: List[Dict]) -> str:
-        """Creates a structured summary of data results."""
         if not data:
             return "No data available."
-            
-        columns = list(data[0].keys())
-        summary = ["Columns: " + ", ".join(columns)]
         
-        for idx, row in enumerate(data[:5], 1):  # Show first 5 rows
-            row_data = ", ".join(f"{k}: {v}" for k, v in row.items())
-            summary.append(f"Row {idx}: {row_data}")
-            
-        if len(data) > 5:
-            summary.append(f"... and {len(data) - 5} more rows")
-            
+        # Convert data to DataFrame for easier processing
+        df = pd.DataFrame(data)
+        
+        summary = []
+        
+        # Summarize numerical columns (min, max, mean, sum)
+        for col in df.columns:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                summary.append(f"{col} - Min: {df[col].min()}, Max: {df[col].max()}, Mean: {df[col].mean()}, Sum: {df[col].sum()}")
+            else:
+                summary.append(f"{col} - Unique Values: {df[col].nunique()}, Top Values: {df[col].value_counts().head(5).to_dict()}")
+        
         return "\n".join(summary)

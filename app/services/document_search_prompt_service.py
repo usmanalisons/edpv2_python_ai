@@ -230,45 +230,12 @@ class DocumentSearchPromptService:
             temperature=0.7
         )
         self.token_service = TokenService(model_name=model_name)
-        self.analyze_prompt = ChatPromptTemplate.from_messages([
-            SystemMessagePromptTemplate.from_template(
-                """You are an advanced AI assistant that analyzes user queries in two ways:
-                1. Classification: Determine which system should handle the query
-                2. Query Refinement: Either improve the query or request clarification
-                
-                Classification Guidelines:
-                - POLICIES: Company policies, procedures, guidelines, regulations, compliance, loan, HR
-                - ORACLE: Oracle systems, training materials, Oracle-related procedures
-                - CTC: Project costs, budgets, cost estimates, financial data
-                - EMPTY: When the query is unclear or needs clarification
-                
-                Refinement Guidelines:
-                - For clear queries: Enhance them for better search results
-                - For unclear queries: Create a user-friendly follow-up question that:
-                  * Clearly explains what additional information is needed
-                  * Uses natural, conversational language
-                  * Provides examples when helpful
-                  * Avoids technical jargon
-                
-                Format your response exactly as:
-                CLASSIFICATION: <POLICIES/ORACLE/CTC/EMPTY>
-                REFINED_QUERY: <refined query or follow-up question>"""
-            ),
-            HumanMessagePromptTemplate.from_template(
-                """Current Question: {question}
-                Chat History:
-                {chat_history}
-                
-                Analyze this query according to the guidelines."""
-            )
-        ])
-        
-        # Define the combined answer generation prompt template
         self.answer_prompt = ChatPromptTemplate.from_messages([
             SystemMessagePromptTemplate.from_template(
                 """You are an AI assistant that generates comprehensive responses in two formats:
                 1. A natural text response
                 2. A formatted HTML response
+                3. ONLY use the provided context, chat history, and search type to generate an answer, don't take anything from outside
                 
                 Guidelines:
                 - Use ONLY the provided context and chat history
@@ -280,6 +247,7 @@ class DocumentSearchPromptService:
                   * Avoid html/body/header tags
                   * Create clean, readable layouts
                   * Use tables for structured data
+                  * avoid adding any quotes
                 
                 Return your response in this exact format:
                 TEXT_ANSWER: <natural language response>
@@ -298,48 +266,6 @@ class DocumentSearchPromptService:
             )
         ])
 
-    async def analyze_question(
-        self,
-        question: str,
-        memory: ConversationBufferMemory
-    ) -> Dict[str, str]:
-       
-        chat_history = self.token_service.summarize_chat_history(
-            memory=memory,
-            max_length=1000,
-            max_messages=10
-        )
-        
-        # Calculate available tokens for the response
-        input_text = f"{question}\n{chat_history}"
-        max_tokens = self.token_service.calculate_max_tokens(input_text)
-        
-        # Create and run the chain
-        chain = LLMChain(
-            llm=self.llm.with_config({"max_tokens": max_tokens}),
-            prompt=self.analyze_prompt
-        )
-        
-        response = await chain.arun({
-            "question": question,
-            "chat_history": chat_history
-        })
-        
-        # Parse the response into components
-        lines = response.strip().split('\n')
-        result = {
-            "classification": "",
-            "refined_query": ""
-        }
-        
-        for line in lines:
-            if line.startswith("CLASSIFICATION:"):
-                result["classification"] = line.replace("CLASSIFICATION:", "").strip()
-            elif line.startswith("REFINED_QUERY:"):
-                result["refined_query"] = line.replace("REFINED_QUERY:", "").strip()
-        
-        return result
-
     async def generate_answer(
         self,
         question: str,
@@ -348,30 +274,26 @@ class DocumentSearchPromptService:
         search_type: str = "Policies & Procedures",
         generate_title: bool = False
     ) -> Dict[str, str]:
+        
+        chat_history = memory.load_memory_variables({})
        
-        max_context_tokens = self.token_service.calculate_context_limit(
-            query=question,
-            chat_history=memory.chat_history
-        )
-        optimized_context = self.token_service.optimize_context(
-            context=context,
-            max_tokens=max_context_tokens
-        )
-        
-        # Get chat history summary
-        chat_history = self.token_service.summarize_chat_history(
-            memory=memory
-        )
-        
-        # Calculate available tokens for the response
+        # max_context_tokens = self.token_service.calculate_context_limit(
+        #     query=question,
+        #     chat_history=chat_history
+        # )
+        # optimized_context = self.token_service.optimize_context(
+        #     context=context,
+        #     max_tokens=max_context_tokens
+        # )
+        # chat_history = self.token_service.summarize_chat_history(
+        #     memory=memory
+        # )
         merged_input = f"""
         Question: {question}
-        Context: {optimized_context}
+        Context: {context}
         History: {chat_history}
         """
         max_tokens = self.token_service.calculate_max_tokens(merged_input)
-        
-        # Create and run the chain
         chain = LLMChain(
             llm=self.llm.with_config({"max_tokens": max_tokens}),
             prompt=self.answer_prompt
@@ -380,12 +302,10 @@ class DocumentSearchPromptService:
         response = await chain.arun({
             "question": question,
             "search_type": search_type,
-            "context": optimized_context,
+            "context": context,
             "chat_history": chat_history,
             "generate_title": str(generate_title)
         })
-        
-        # Parse the response into components
         lines = response.strip().split('\n')
         result = {
             "text_answer": "",
